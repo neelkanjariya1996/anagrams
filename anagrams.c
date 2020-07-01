@@ -16,12 +16,17 @@
 #define BLOCK_SIZE 1024       // block size
 #define SUCCESS 0
 
-pthread_mutex_t count_mutex;  // mutex to access the main count array
-int64_t count[MAX];           // main count array
-char *ptr1 = NULL;            // pointer to mmap for file_1
-char *ptr2 = NULL;            // pointer to mmap for file_2
-size_t s1_sz;                 // size of file_1
-size_t s2_sz;                 // size of file_2
+typedef struct global_t_ {
+
+  size_t s1_sz;                 // size of file_1
+  size_t s2_sz;                 // size of file_2
+  char *ptr1;                   // pointer to mmap for file_1
+  char *ptr2;                   // pointer to mmap for file_2
+  pthread_mutex_t mutex;        // mutex to access the main count array
+  int64_t count[MAX];           // main count array
+} global_t;
+
+global_t g;
 
 /*
  * thread function to read the file blocks
@@ -46,12 +51,12 @@ thread_read_file_block (void *thread_num)
    * thread_count array
    */
   for(i = (unsigned int)(t_no) * BLOCK_SIZE; 
-      i < s1_sz; i += ((THREAD_COUNT) * BLOCK_SIZE)) {
+      i < g.s1_sz; i += ((THREAD_COUNT) * BLOCK_SIZE)) {
 
-    for(j = i; j < (i + BLOCK_SIZE) && j < s1_sz; j++) {
+    for(j = i; j < (i + BLOCK_SIZE) && j < g.s1_sz; j++) {
       
-      thread_count[ptr1[j]]++;
-      thread_count[ptr2[j]]--;
+      thread_count[g.ptr1[j]]++;
+      thread_count[g.ptr2[j]]--;
     }
   }
 
@@ -59,16 +64,16 @@ thread_read_file_block (void *thread_num)
    * acquire the mutex to access the
    * main count array
    */
-  pthread_mutex_lock(&count_mutex);
+  pthread_mutex_lock(&g.mutex);
 
   for(i = 0; i < MAX; i++)
-    count[i] += thread_count[i];
+    g.count[i] += thread_count[i];
 
   /*
    * release the mutex so other threads 
    * can access it
    */
-  pthread_mutex_unlock(&count_mutex);
+  pthread_mutex_unlock(&g.mutex);
 
   pthread_exit((void *)0);
 }
@@ -84,7 +89,7 @@ is_anagram (void)
 
   for(int i = 0; i < MAX; i++) {
   
-    if(count[i] != 0) {
+    if(g.count[i] != 0) {
     
       return false;
     }
@@ -136,7 +141,7 @@ main (int argc, char *argv[])
     printf("Failed to get status for %s\n", argv[1]);
     return -1;
   }
-  s1_sz = s1.st_size;
+  g.s1_sz = s1.st_size;
 
   rc = fstat(fd2, &s2);
   if(rc < 0) {
@@ -144,9 +149,9 @@ main (int argc, char *argv[])
     printf("Failed to get status for %s\n", argv[2]);
     return -1;
   }
-  s2_sz = s2.st_size;
+  g.s2_sz = s2.st_size;
 
-  if(s1_sz != s2_sz) {
+  if(g.s1_sz != g.s2_sz) {
 
     printf("Files are not anagrams\n");
     return 0;
@@ -155,15 +160,15 @@ main (int argc, char *argv[])
   /*
    * map both the files in memory
    */
-  ptr1 = mmap (0, s1_sz, PROT_READ, MAP_PRIVATE, fd1, 0);
-  if(ptr1 == MAP_FAILED) {
+  g.ptr1 = mmap (0, g.s1_sz, PROT_READ, MAP_PRIVATE, fd1, 0);
+  if(g.ptr1 == MAP_FAILED) {
     
     printf("Could not map file %s\n", argv[1]);
     return -1;
   }
 
-  ptr2 = mmap (0, s2_sz, PROT_READ, MAP_PRIVATE, fd2, 0);
-  if(ptr2 == MAP_FAILED) {
+  g.ptr2 = mmap (0, g.s2_sz, PROT_READ, MAP_PRIVATE, fd2, 0);
+  if(g.ptr2 == MAP_FAILED) {
     
     printf("Could not map file %s\n", argv[2]);
     return -1;
@@ -172,7 +177,7 @@ main (int argc, char *argv[])
   /* 
    * initialize count array 
    */
-  memset(count, 0, MAX * sizeof(int64_t));
+  memset(g.count, 0, MAX * sizeof(int64_t));
 
   /*
    * initialize the attribute
@@ -250,8 +255,8 @@ main (int argc, char *argv[])
    * unmap the files from memory
    */
 
-  munmap(ptr1, s1_sz);
-  munmap(ptr2, s2_sz);
+  munmap(g.ptr1, g.s1_sz);
+  munmap(g.ptr2, g.s2_sz);
 
   /*
    * check whether files are anagrams
